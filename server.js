@@ -58,7 +58,7 @@ app.post('/api/facebook/post', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`Facebook API Server running on port ${PORT}`);
 });

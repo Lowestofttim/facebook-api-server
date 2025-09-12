@@ -11,10 +11,15 @@ app.get('/health', (req, res) => {
 
 app.post('/api/facebook/post', async (req, res) => {
   try {
-    const { content, hashtags } = req.body;
+    const { content, hashtags, pageId } = req.body;
+    const userAccessToken = req.headers.authorization?.replace('Bearer ', '');
 
     if (!content) {
       return res.status(400).json({ error: 'Content is required' });
+    }
+
+    if (!userAccessToken) {
+      return res.status(400).json({ error: 'Access token is required' });
     }
 
     // Prepare post text
@@ -26,19 +31,19 @@ app.post('/api/facebook/post', async (req, res) => {
       postText = `${content}\n\n${hashtagText}`;
     }
 
-    const pageId = process.env.FACEBOOK_PAGE_ID;
-    const accessToken = process.env.FACEBOOK_ACCESS_TOKEN;
-
-    if (!pageId || !accessToken) {
-      return res.status(500).json({ error: 'Facebook credentials not configured' });
+    // Use pageId from request if provided, otherwise fall back to environment variable
+    const targetPageId = pageId || process.env.FACEBOOK_PAGE_ID;
+    
+    if (!targetPageId) {
+      return res.status(400).json({ error: 'Page ID is required (either in request or environment)' });
     }
 
-    // Post to Facebook
+    // Post to Facebook page
     const response = await axios.post(
-      `https://graph.facebook.com/v18.0/${pageId}/feed`,
+      `https://graph.facebook.com/v18.0/${targetPageId}/feed`,
       {
         message: postText,
-        access_token: accessToken
+        access_token: userAccessToken
       }
     );
 
@@ -53,7 +58,8 @@ app.post('/api/facebook/post', async (req, res) => {
     console.error('Facebook API Error:', error);
     res.status(500).json({
       error: 'Failed to post to Facebook',
-      message: error.response?.data?.error?.message || error.message
+      message: error.response?.data?.error?.message || error.message,
+      facebookError: error.response?.data?.error // This helps Pipedream parse the error
     });
   }
 });

@@ -77,14 +77,37 @@ app.post('/api/facebook/post', async (req, res) => {
       // Convert base64 to buffer
       const imageBuffer = Buffer.from(image.data, 'base64');
       console.log(`Image buffer size: ${imageBuffer.length} bytes`);
+      console.log(`Image MIME type: ${image.mimeType}`);
+
+      // Determine proper filename and content type
+      let filename = 'monkeyzoo_image.jpg';
+      let contentType = 'image/jpeg';
+      
+      if (image.filename) {
+        filename = image.filename;
+      }
+      
+      if (image.mimeType) {
+        contentType = image.mimeType;
+        // Ensure we have a proper file extension
+        if (image.mimeType.includes('png') && !filename.toLowerCase().endsWith('.png')) {
+          filename = filename.replace(/\.[^/.]+$/, '') + '.png';
+        } else if (image.mimeType.includes('jpeg') && !filename.toLowerCase().endsWith('.jpg') && !filename.toLowerCase().endsWith('.jpeg')) {
+          filename = filename.replace(/\.[^/.]+$/, '') + '.jpg';
+        }
+      }
+
+      console.log(`Final filename: ${filename}, Content-Type: ${contentType}`);
 
       // Create form data for multipart upload
       const formData = new FormData();
       formData.append('message', postText);
       formData.append('access_token', userAccessToken);
+      
+      // Append the image with proper stream handling
       formData.append('source', imageBuffer, {
-        filename: image.filename || 'image.jpg',
-        contentType: image.mimeType || 'image/jpeg'
+        filename: filename,
+        contentType: contentType
       });
 
       console.log('Form data prepared for /photos endpoint, making Facebook API request...');
@@ -96,7 +119,9 @@ app.post('/api/facebook/post', async (req, res) => {
         {
           headers: {
             ...formData.getHeaders()
-          }
+          },
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity
         }
       );
 

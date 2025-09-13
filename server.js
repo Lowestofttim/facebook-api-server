@@ -24,7 +24,7 @@ app.use((req, res, next) => {
 
 app.get('/health', (req, res) => {
   console.log('Health check requested');
-  res.json({ status: 'OK', service: 'Facebook & Instagram API Server' });
+  res.json({ status: 'OK', service: 'Facebook & Threads API Server' });
 });
 
 // Facebook endpoint
@@ -223,133 +223,60 @@ app.post('/api/facebook/post', async (req, res) => {
   }
 });
 
-// Instagram endpoint
-app.post('/api/instagram/post', async (req, res) => {
-  console.log('=== Instagram POST request received ===');
+// Threads endpoint
+app.post('/api/threads/post', async (req, res) => {
+  console.log('=== Threads POST request received ===');
   
   try {
-    const { character_name, facebook_access_token, instagram_business_account_id, google_drive_file, instagram_post } = req.body;
-    
-    // Use Facebook access token for Instagram API (Instagram API goes through Facebook Graph API)
-    const instagramAccessToken = facebook_access_token;
+    const { characterName, content, imageFile } = req.body;
 
-    console.log('Parsed Instagram request data:', {
-      character_name: character_name,
-      instagram_business_account_id: instagram_business_account_id,
-      hasGoogleDriveFile: !!google_drive_file,
-      hasInstagramPost: !!instagram_post,
-      hasToken: !!instagramAccessToken
+    console.log('Parsed Threads request data:', {
+      characterName: characterName,
+      content: content ? `${content.substring(0, 50)}...` : 'MISSING',
+      hasImageFile: !!imageFile
     });
 
-    if (!character_name) {
+    if (!characterName) {
       console.log('ERROR: Character name is missing');
       return res.status(400).json({ error: 'Character name is required' });
     }
 
-    if (!instagramAccessToken) {
-      console.log('ERROR: Instagram access token is missing');
-      return res.status(400).json({ error: 'Instagram access token is required' });
+    if (!content) {
+      console.log('ERROR: Content is missing');
+      return res.status(400).json({ error: 'Content is required' });
     }
 
-    if (!instagram_business_account_id) {
-      console.log('ERROR: Instagram Business Account ID is missing');
-      return res.status(400).json({ error: 'Instagram Business Account ID is required' });
+    if (!imageFile || !imageFile.id) {
+      console.log('ERROR: Image file information is missing');
+      return res.status(400).json({ error: 'Image file information is required' });
     }
 
-    if (!google_drive_file || !google_drive_file.file_id) {
-      console.log('ERROR: Google Drive file information is missing');
-      return res.status(400).json({ error: 'Google Drive file information is required' });
-    }
-
-    console.log('Starting Instagram posting process...');
-    console.log(`Instagram Business Account ID: ${instagram_business_account_id}`);
-    console.log(`Google Drive file: ${google_drive_file.file_name} (${google_drive_file.file_id})`);
-
-    // Prepare Instagram caption with hashtags
-    let caption = instagram_post.caption;
-    if (instagram_post.hashtags && instagram_post.hashtags.length > 0) {
-      const hashtagText = instagram_post.hashtags.map(tag => 
-        tag.startsWith('#') ? tag : `#${tag}`
-      ).join(' ');
-      caption = `${instagram_post.caption}\n\n${hashtagText}`;
-    }
-
-    console.log(`Final Instagram caption: ${caption.substring(0, 100)}...`);
-
-    // Step 1: Create Instagram media container
-    console.log('Step 1: Creating Instagram media container...');
-    
-    const mediaFormData = new URLSearchParams();
-    mediaFormData.append('image_url', `https://drive.google.com/uc?export=download&id=${google_drive_file.file_id}`);
-    mediaFormData.append('caption', caption);
-    mediaFormData.append('access_token', instagramAccessToken);
-
-    const mediaResponse = await axios.post(
-      `https://graph.facebook.com/v18.0/${instagram_business_account_id}/media`,
-      mediaFormData.toString(),
-      {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        timeout: 60000
-      }
-    );
-
-    console.log('Instagram media container SUCCESS:', mediaResponse.data);
-    const mediaContainerId = mediaResponse.data.id;
-
-    // Step 2: Publish the Instagram media container
-    console.log('Step 2: Publishing Instagram media container...');
-    
-    const publishFormData = new URLSearchParams();
-    publishFormData.append('creation_id', mediaContainerId);
-    publishFormData.append('access_token', instagramAccessToken);
-
-    const publishResponse = await axios.post(
-      `https://graph.facebook.com/v18.0/${instagram_business_account_id}/media_publish`,
-      publishFormData.toString(),
-      {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        timeout: 30000
-      }
-    );
-
-    console.log('Instagram publish SUCCESS:', publishResponse.data);
+    // For now, return a placeholder response until we get Threads API access
+    console.log('Threads endpoint working - ready for Threads API implementation');
+    console.log(`Character: ${characterName}`);
+    console.log(`Image file: ${imageFile.name} (${imageFile.id})`);
 
     res.json({
       success: true,
-      post_id: publishResponse.data.id,
-      post_url: `https://instagram.com/p/${publishResponse.data.id}`,
-      platform: 'Instagram',
-      endpoint_used: 'media_publish',
-      image_uploaded: true,
-      media_container_id: mediaContainerId,
-      instagram_business_account_id: instagram_business_account_id,
-      caption: caption,
-      image_info: {
-        filename: google_drive_file.file_name,
-        google_drive_id: google_drive_file.file_id
-      }
+      message: 'Threads endpoint is working - need Threads API access to proceed',
+      character_name: characterName,
+      content: content,
+      image_file: imageFile,
+      platform: 'Threads'
     });
 
   } catch (error) {
-    console.error('=== Instagram API Error ===');
+    console.error('=== Threads API Error ===');
     console.error('Error message:', error.message);
-    console.error('Error response status:', error.response?.status);
-    console.error('Error response data:', error.response?.data);
-    console.error('Full error:', error);
     
     res.status(500).json({
-      error: 'Failed to post to Instagram',
-      message: error.response?.data?.error?.message || error.message,
-      instagramError: error.response?.data?.error
+      error: 'Failed to post to Threads',
+      message: error.message
     });
   }
 });
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-  console.log(`Facebook & Instagram API Server running on port ${PORT}`);
+  console.log(`Facebook & Threads API Server running on port ${PORT}`);
 });

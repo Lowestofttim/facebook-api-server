@@ -229,11 +229,16 @@ app.post('/api/threads/post', async (req, res) => {
   
   try {
     const { characterName, content, imageFile } = req.body;
+    
+    // For Threads, we'll use the same Facebook access token since Threads is owned by Meta
+    // You'll need to pass the access token in the Authorization header
+    const threadsAccessToken = req.headers.authorization?.replace('Bearer ', '');
 
     console.log('Parsed Threads request data:', {
       characterName: characterName,
       content: content ? `${content.substring(0, 50)}...` : 'MISSING',
-      hasImageFile: !!imageFile
+      hasImageFile: !!imageFile,
+      hasToken: !!threadsAccessToken
     });
 
     if (!characterName) {
@@ -251,27 +256,114 @@ app.post('/api/threads/post', async (req, res) => {
       return res.status(400).json({ error: 'Image file information is required' });
     }
 
-    // For now, return a placeholder response until we get Threads API access
-    console.log('Threads endpoint working - ready for Threads API implementation');
+    if (!threadsAccessToken) {
+      console.log('ERROR: Threads access token is missing');
+      return res.status(400).json({ error: 'Threads access token is required' });
+    }
+
+    console.log('Starting Threads posting process...');
     console.log(`Character: ${characterName}`);
     console.log(`Image file: ${imageFile.name} (${imageFile.id})`);
 
+    // Download image from Google Drive
+    let imageBuffer;
+    try {
+      console.log(`Downloading image from Google Drive: ${imageFile.id}`);
+      
+      // Download the image directly from Google Drive using public URL
+      const downloadUrl = `https://drive.google.com/uc?export=download&id=${imageFile.id}`;
+      const imageResponse = await axios.get(downloadUrl, {
+        responseType: 'arraybuffer',
+        timeout: 30000
+      });
+      
+      imageBuffer = Buffer.from(imageResponse.data);
+      console.log(`Successfully downloaded image: ${imageBuffer.length} bytes`);
+      
+      if (imageBuffer.length < 100) {
+        throw new Error(`Downloaded image too small: ${imageBuffer.length} bytes`);
+      }
+      
+    } catch (error) {
+      console.error('Error downloading image from Google Drive:', error);
+      throw new Error(`Failed to download image from Google Drive: ${error.message}`);
+    }
+
+    // Step 1: Create Threads media container
+    console.log('Step 1: Creating Threads media container...');
+    
+    const mediaFormData = new URLSearchParams();
+    mediaFormData.append('image_url', `https://drive.google.com/uc?export=download&id=${imageFile.id}`);
+    mediaFormData.append('text', content);
+    mediaFormData.append('access_token', threadsAccessToken);
+
+    // Note: Threads uses a different user ID format - you'll need to get your Threads user ID
+    // For now, we'll use a placeholder and you'll need to provide your actual Threads user ID
+    const threadsUserId = process.env.THREADS_USER_ID || 'YOUR_THREADS_USER_ID';
+
+    const mediaResponse = await axios.post(
+      `https://graph.threads.net/v1.0/${threadsUserId}/threads`,
+      mediaFormData.toString(),
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        timeout: 60000
+      }
+    );
+
+    console.log('Threads media container SUCCESS:', mediaResponse.data);
+    const mediaContainerId = mediaResponse.data.id;
+
+    // Step 2: Publish the Threads media container
+    console.log('Step 2: Publishing Threads media container...');
+    
+    const publishFormData = new URLSearchParams();
+    publishFormData.append('creation_id', mediaContainerId);
+    publishFormData.append('access_token', threadsAccessToken);
+
+    const publishResponse = await axios.post(
+      `https://graph.threads.net/v1.0/${threadsUserId}/threads_publish`,
+      publishFormData.toString(),
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        timeout: 30000
+      }
+    );
+
+    console.log('Threads publish SUCCESS:', publishResponse.data);
+
     res.json({
       success: true,
-      message: 'Threads endpoint is working - need Threads API access to proceed',
+      post_id: publishResponse.data.id,
+      post_url: `https://threads.net/@${characterName.toLowerCase()}/post/${publishResponse.data.id}`,
+      platform: 'Threads',
+      endpoint_used: 'threads_publish',
+      image_uploaded: true,
+      media_container_id: mediaContainerId,
+      threads_user_id: threadsUserId,
       character_name: characterName,
       content: content,
-      image_file: imageFile,
-      platform: 'Threads'
+      image_info: {
+        filename: imageFile.name,
+        google_drive_id: imageFile.id,
+        size: imageBuffer.length
+      }
     });
 
   } catch (error) {
     console.error('=== Threads API Error ===');
     console.error('Error message:', error.message);
+    console.error('Error response status:', error.response?.status);
+    console.error('Error response data:', error.response?.data);
+    console.error('Full error:', error);
     
     res.status(500).json({
       error: 'Failed to post to Threads',
-      message: error.message
+      message: error.response?.data?.error?.message || error.message,
+      threadsError: error.response?.data?.error
     });
   }
 });

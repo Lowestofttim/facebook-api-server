@@ -1,6 +1,5 @@
 const express = require('express');
 const axios = require('axios');
-const qs = require('querystring');
 require('dotenv').config();
 
 const app = express();
@@ -39,16 +38,15 @@ app.post('/api/facebook/post', async (req, res) => {
       return res.status(400).json({ error: 'Page ID is required (either in request or environment)' });
     }
 
-    // Prepare form data using querystring module
-    const formData = qs.stringify({
-      message: postText,
-      access_token: userAccessToken
-    });
+    // Create URLSearchParams object for proper form encoding
+    const formData = new URLSearchParams();
+    formData.append('message', postText);
+    formData.append('access_token', userAccessToken);
 
-    // Post to Facebook page using form-encoded data
+    // Post to Facebook page using properly form-encoded data
     const response = await axios.post(
       `https://graph.facebook.com/v18.0/${targetPageId}/feed`,
-      formData,
+      formData.toString(),
       {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded'

@@ -74,43 +74,85 @@ app.post('/api/facebook/post', async (req, res) => {
         postText = `${content}\n\n${hashtagText}`;
       }
 
-      // Convert base64 to buffer
-      const imageBuffer = Buffer.from(image.data, 'base64');
-      console.log(`Image buffer size: ${imageBuffer.length} bytes`);
-      console.log(`Image MIME type: ${image.mimeType}`);
+      console.log('Final post text for photo:', postText.substring(0, 100) + '...');
 
-      // Determine proper filename and content type
-      let filename = 'monkeyzoo_image.jpg';
-      let contentType = 'image/jpeg';
-      
-      if (image.filename) {
-        filename = image.filename;
+      // Convert base64 to buffer with validation
+      let imageBuffer;
+      try {
+        // Remove any data URL prefix if present
+        const base64Data = image.data.replace(/^data:image\/[a-z]+;base64,/, '');
+        imageBuffer = Buffer.from(base64Data, 'base64');
+        console.log(`Image buffer size: ${imageBuffer.length} bytes`);
+        console.log(`Original MIME type: ${image.mimeType}`);
+        console.log(`Original filename: ${image.filename}`);
+      } catch (error) {
+        console.error('Error converting base64 to buffer:', error);
+        throw new Error('Invalid image data format');
       }
-      
+
+      // Validate image size (Facebook limit is 10MB)
+      if (imageBuffer.length > 10 * 1024 * 1024) {
+        console.error(`Image too large: ${imageBuffer.length} bytes (limit: 10MB)`);
+        throw new Error('Image file too large for Facebook (max 10MB)');
+      }
+
+      // Validate that we have actual image data
+      if (imageBuffer.length < 100) {
+        console.error(`Image buffer too small: ${imageBuffer.length} bytes`);
+        throw new Error('Image data appears to be corrupted or empty');
+      }
+
+      // Determine proper content type and filename
+      let contentType = 'image/jpeg'; // Default to JPEG
+      let filename = 'monkeyzoo_image.jpg';
+
       if (image.mimeType) {
-        contentType = image.mimeType;
-        // Ensure we have a proper file extension
-        if (image.mimeType.includes('png') && !filename.toLowerCase().endsWith('.png')) {
-          filename = filename.replace(/\.[^/.]+$/, '') + '.png';
-        } else if (image.mimeType.includes('jpeg') && !filename.toLowerCase().endsWith('.jpg') && !filename.toLowerCase().endsWith('.jpeg')) {
-          filename = filename.replace(/\.[^/.]+$/, '') + '.jpg';
+        if (image.mimeType.includes('png')) {
+          contentType = 'image/png';
+          filename = 'monkeyzoo_image.png';
+        } else if (image.mimeType.includes('gif')) {
+          contentType = 'image/gif';
+          filename = 'monkeyzoo_image.gif';
+        } else if (image.mimeType.includes('webp')) {
+          contentType = 'image/webp';
+          filename = 'monkeyzoo_image.webp';
+        } else if (image.mimeType.includes('jpeg') || image.mimeType.includes('jpg')) {
+          contentType = 'image/jpeg';
+          filename = 'monkeyzoo_image.jpg';
         }
       }
 
-      console.log(`Final filename: ${filename}, Content-Type: ${contentType}`);
+      // Use original filename if provided and has valid extension
+      if (image.filename && typeof image.filename === 'string') {
+        const originalName = image.filename.toLowerCase();
+        if (originalName.endsWith('.jpg') || originalName.endsWith('.jpeg') || 
+            originalName.endsWith('.png') || originalName.endsWith('.gif') || 
+            originalName.endsWith('.webp')) {
+          filename = image.filename;
+        }
+      }
+
+      console.log(`Final filename: ${filename}`);
+      console.log(`Final content type: ${contentType}`);
 
       // Create form data for multipart upload
       const formData = new FormData();
+      
+      // Add the message first
       formData.append('message', postText);
+      
+      // Add the access token
       formData.append('access_token', userAccessToken);
       
-      // Append the image with proper stream handling
+      // Add the image file with proper stream handling
       formData.append('source', imageBuffer, {
         filename: filename,
-        contentType: contentType
+        contentType: contentType,
+        knownLength: imageBuffer.length
       });
 
-      console.log('Form data prepared for /photos endpoint, making Facebook API request...');
+      console.log('Form data prepared for /photos endpoint');
+      console.log(`Ready to upload: ${filename} (${imageBuffer.length} bytes, ${contentType})`);
 
       // Post to Facebook page photos endpoint
       const response = await axios.post(
@@ -121,7 +163,8 @@ app.post('/api/facebook/post', async (req, res) => {
             ...formData.getHeaders()
           },
           maxContentLength: Infinity,
-          maxBodyLength: Infinity
+          maxBodyLength: Infinity,
+          timeout: 60000 // 60 second timeout for image uploads
         }
       );
 
@@ -132,7 +175,13 @@ app.post('/api/facebook/post', async (req, res) => {
         post_id: response.data.id,
         post_url: `https://facebook.com/${response.data.id}`,
         platform: 'Facebook',
-        endpoint_used: 'photos'
+        endpoint_used: 'photos',
+        image_uploaded: true,
+        image_info: {
+          filename: filename,
+          size: imageBuffer.length,
+          contentType: contentType
+        }
       });
 
     } else {
@@ -174,7 +223,8 @@ app.post('/api/facebook/post', async (req, res) => {
         post_id: response.data.id,
         post_url: `https://facebook.com/${response.data.id}`,
         platform: 'Facebook',
-        endpoint_used: 'feed'
+        endpoint_used: 'feed',
+        image_uploaded: false
       });
     }
 

@@ -14,6 +14,9 @@ app.use((req, res, next) => {
     if (logBody.image?.data) {
       logBody.image.data = '[BASE64_IMAGE_DATA_TRUNCATED]';
     }
+    if (logBody.facebook_access_token) {
+      logBody.facebook_access_token = '[ACCESS_TOKEN_HIDDEN]';
+    }
     console.log('Request body:', JSON.stringify(logBody, null, 2));
   }
   next();
@@ -227,7 +230,7 @@ app.post('/api/instagram/post', async (req, res) => {
   try {
     const { character_name, facebook_access_token, instagram_business_account_id, google_drive_file, instagram_post } = req.body;
     
-    // Get Instagram access token from request body (Facebook token works for Instagram)
+    // Use Facebook access token for Instagram API (Instagram API goes through Facebook Graph API)
     const instagramAccessToken = facebook_access_token;
 
     console.log('Parsed Instagram request data:', {
@@ -262,6 +265,7 @@ app.post('/api/instagram/post', async (req, res) => {
     console.log('Instagram endpoint working - all required data received');
     console.log(`Instagram Business Account ID: ${instagram_business_account_id}`);
     console.log(`Google Drive file: ${google_drive_file.file_name} (${google_drive_file.file_id})`);
+    console.log(`Caption: ${instagram_post.caption.substring(0, 50)}...`);
 
     res.json({
       success: true,
@@ -283,6 +287,7 @@ app.post('/api/instagram/post', async (req, res) => {
     });
   }
 });
+
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`Facebook & Instagram API Server running on port ${PORT}`);

@@ -59,7 +59,7 @@ app.post('/api/facebook/post', async (req, res) => {
 
     // Check if we have a Google Drive file to download and post
     if (googleDriveFile && googleDriveFile.id && (facebookEndpoint === 'photos' || usePhotosEndpoint)) {
-      console.log('Processing image post via /photos endpoint...');
+      console.log('Processing image post - uploading photo first, then posting to feed...');
       console.log(`Google Drive file: ${googleDriveFile.name} (${googleDriveFile.id})`);
       
       // Download image from Google Drive
@@ -86,7 +86,37 @@ app.post('/api/facebook/post', async (req, res) => {
         throw new Error(`Failed to download image from Google Drive: ${error.message}`);
       }
 
-      // Prepare post text with hashtags for photo post
+      // Step 1: Upload the photo to get a photo ID
+      console.log('Step 1: Uploading photo to Facebook...');
+      
+      const photoFormData = new FormData();
+      photoFormData.append('access_token', userAccessToken);
+      photoFormData.append('published', 'false'); // Don't publish the photo directly
+      photoFormData.append('source', imageBuffer, {
+        filename: googleDriveFile.name || 'monkeyzoo_image.jpg',
+        contentType: googleDriveFile.mimeType || 'image/jpeg'
+      });
+
+      const photoResponse = await axios.post(
+        `https://graph.facebook.com/v18.0/${targetPageId}/photos`,
+        photoFormData,
+        {
+          headers: {
+            ...photoFormData.getHeaders()
+          },
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity,
+          timeout: 60000
+        }
+      );
+
+      console.log('Photo upload SUCCESS:', photoResponse.data);
+      const photoId = photoResponse.data.id;
+
+      // Step 2: Create a feed post with the uploaded photo
+      console.log('Step 2: Creating feed post with uploaded photo...');
+      
+      // Prepare post text with hashtags
       let postText = content;
       if (hashtags && hashtags.length > 0) {
         const hashtagText = hashtags.map(tag => 
@@ -95,73 +125,35 @@ app.post('/api/facebook/post', async (req, res) => {
         postText = `${content}\n\n${hashtagText}`;
       }
 
-      console.log('Final post text for photo:', postText.substring(0, 100) + '...');
+      const feedFormData = new URLSearchParams();
+      feedFormData.append('message', postText);
+      feedFormData.append('attached_media[0]', `{"media_fbid":"${photoId}"}`);
+      feedFormData.append('access_token', userAccessToken);
 
-      // Validate image size (Facebook limit is 10MB)
-      if (imageBuffer.length > 10 * 1024 * 1024) {
-        console.error(`Image too large: ${imageBuffer.length} bytes (limit: 10MB)`);
-        throw new Error('Image file too large for Facebook (max 10MB)');
-      }
-
-      // Determine proper content type and filename
-      let contentType = 'image/jpeg'; // Default to JPEG
-      let filename = googleDriveFile.name || 'monkeyzoo_image.jpg';
-
-      if (googleDriveFile.mimeType) {
-        if (googleDriveFile.mimeType.includes('png')) {
-          contentType = 'image/png';
-        } else if (googleDriveFile.mimeType.includes('gif')) {
-          contentType = 'image/gif';
-        } else if (googleDriveFile.mimeType.includes('webp')) {
-          contentType = 'image/webp';
-        } else if (googleDriveFile.mimeType.includes('jpeg') || googleDriveFile.mimeType.includes('jpg')) {
-          contentType = 'image/jpeg';
-        }
-      }
-
-      console.log(`Final filename: ${filename}`);
-      console.log(`Final content type: ${contentType}`);
-
-      // Create form data for multipart upload
-      const formData = new FormData();
-      formData.append('message', postText);
-      formData.append('access_token', userAccessToken);
-      formData.append('source', imageBuffer, {
-        filename: filename,
-        contentType: contentType,
-        knownLength: imageBuffer.length
-      });
-
-      console.log('Form data prepared for /photos endpoint');
-      console.log(`Ready to upload: ${filename} (${imageBuffer.length} bytes, ${contentType})`);
-
-      // Post to Facebook page photos endpoint
-      const response = await axios.post(
-        `https://graph.facebook.com/v18.0/${targetPageId}/photos`,
-        formData,
+      const feedResponse = await axios.post(
+        `https://graph.facebook.com/v18.0/${targetPageId}/feed`,
+        feedFormData.toString(),
         {
           headers: {
-            ...formData.getHeaders()
-          },
-          maxContentLength: Infinity,
-          maxBodyLength: Infinity,
-          timeout: 60000
+            'Content-Type': 'application/x-www-form-urlencoded'
+          }
         }
       );
 
-      console.log('Facebook /photos API SUCCESS:', response.data);
+      console.log('Feed post SUCCESS:', feedResponse.data);
 
       res.json({
         success: true,
-        post_id: response.data.id,
-        post_url: `https://facebook.com/${response.data.id}`,
+        post_id: feedResponse.data.id,
+        post_url: `https://facebook.com/${feedResponse.data.id}`,
         platform: 'Facebook',
-        endpoint_used: 'photos',
+        endpoint_used: 'feed_with_photo',
         image_uploaded: true,
+        photo_id: photoId,
         image_info: {
-          filename: filename,
+          filename: googleDriveFile.name,
           size: imageBuffer.length,
-          contentType: contentType
+          contentType: googleDriveFile.mimeType
         }
       });
 

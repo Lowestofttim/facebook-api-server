@@ -11,11 +11,7 @@ app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
   if (req.method === 'POST') {
     const logBody = { ...req.body };
-    if (logBody.image?.data) {
-      logBody.image.data = '[BASE64_IMAGE_DATA_TRUNCATED]';
-    }
     console.log('Request body:', JSON.stringify(logBody, null, 2));
-    console.log('Request headers:', JSON.stringify(req.headers, null, 2));
   }
   next();
 });
@@ -29,7 +25,7 @@ app.post('/api/facebook/post', async (req, res) => {
   console.log('=== Facebook POST request received ===');
   
   try {
-    const { content, hashtags, pageId, image, facebookEndpoint, usePhotosEndpoint } = req.body;
+    const { content, hashtags, pageId, googleDriveFile, facebookEndpoint, usePhotosEndpoint } = req.body;
     const userAccessToken = req.headers.authorization?.replace('Bearer ', '');
 
     console.log('Parsed request data:', {
@@ -37,7 +33,7 @@ app.post('/api/facebook/post', async (req, res) => {
       hashtags: hashtags,
       pageId: pageId,
       hasToken: !!userAccessToken,
-      hasImage: !!image,
+      hasGoogleDriveFile: !!googleDriveFile,
       requestedEndpoint: facebookEndpoint || (usePhotosEndpoint ? 'photos' : 'feed')
     });
 
@@ -61,10 +57,35 @@ app.post('/api/facebook/post', async (req, res) => {
 
     console.log('Target page ID:', targetPageId);
 
-    // Check if we have an image to post
-    if (image && image.data && (facebookEndpoint === 'photos' || usePhotosEndpoint)) {
+    // Check if we have a Google Drive file to download and post
+    if (googleDriveFile && googleDriveFile.id && (facebookEndpoint === 'photos' || usePhotosEndpoint)) {
       console.log('Processing image post via /photos endpoint...');
+      console.log(`Google Drive file: ${googleDriveFile.name} (${googleDriveFile.id})`);
       
+      // Download image from Google Drive
+      let imageBuffer;
+      try {
+        console.log(`Downloading image from Google Drive: ${googleDriveFile.id}`);
+        
+        // Download the image directly from Google Drive using public URL
+        const downloadUrl = `https://drive.google.com/uc?export=download&id=${googleDriveFile.id}`;
+        const imageResponse = await axios.get(downloadUrl, {
+          responseType: 'arraybuffer',
+          timeout: 30000
+        });
+        
+        imageBuffer = Buffer.from(imageResponse.data);
+        console.log(`Successfully downloaded image: ${imageBuffer.length} bytes`);
+        
+        if (imageBuffer.length < 100) {
+          throw new Error(`Downloaded image too small: ${imageBuffer.length} bytes`);
+        }
+        
+      } catch (error) {
+        console.error('Error downloading image from Google Drive:', error);
+        throw new Error(`Failed to download image from Google Drive: ${error.message}`);
+      }
+
       // Prepare post text with hashtags for photo post
       let postText = content;
       if (hashtags && hashtags.length > 0) {
@@ -76,59 +97,25 @@ app.post('/api/facebook/post', async (req, res) => {
 
       console.log('Final post text for photo:', postText.substring(0, 100) + '...');
 
-      // Convert base64 to buffer with validation
-      let imageBuffer;
-      try {
-        // Remove any data URL prefix if present
-        const base64Data = image.data.replace(/^data:image\/[a-z]+;base64,/, '');
-        imageBuffer = Buffer.from(base64Data, 'base64');
-        console.log(`Image buffer size: ${imageBuffer.length} bytes`);
-        console.log(`Original MIME type: ${image.mimeType}`);
-        console.log(`Original filename: ${image.filename}`);
-      } catch (error) {
-        console.error('Error converting base64 to buffer:', error);
-        throw new Error('Invalid image data format');
-      }
-
       // Validate image size (Facebook limit is 10MB)
       if (imageBuffer.length > 10 * 1024 * 1024) {
         console.error(`Image too large: ${imageBuffer.length} bytes (limit: 10MB)`);
         throw new Error('Image file too large for Facebook (max 10MB)');
       }
 
-      // Validate that we have actual image data
-      if (imageBuffer.length < 100) {
-        console.error(`Image buffer too small: ${imageBuffer.length} bytes`);
-        throw new Error('Image data appears to be corrupted or empty');
-      }
-
       // Determine proper content type and filename
       let contentType = 'image/jpeg'; // Default to JPEG
-      let filename = 'monkeyzoo_image.jpg';
+      let filename = googleDriveFile.name || 'monkeyzoo_image.jpg';
 
-      if (image.mimeType) {
-        if (image.mimeType.includes('png')) {
+      if (googleDriveFile.mimeType) {
+        if (googleDriveFile.mimeType.includes('png')) {
           contentType = 'image/png';
-          filename = 'monkeyzoo_image.png';
-        } else if (image.mimeType.includes('gif')) {
+        } else if (googleDriveFile.mimeType.includes('gif')) {
           contentType = 'image/gif';
-          filename = 'monkeyzoo_image.gif';
-        } else if (image.mimeType.includes('webp')) {
+        } else if (googleDriveFile.mimeType.includes('webp')) {
           contentType = 'image/webp';
-          filename = 'monkeyzoo_image.webp';
-        } else if (image.mimeType.includes('jpeg') || image.mimeType.includes('jpg')) {
+        } else if (googleDriveFile.mimeType.includes('jpeg') || googleDriveFile.mimeType.includes('jpg')) {
           contentType = 'image/jpeg';
-          filename = 'monkeyzoo_image.jpg';
-        }
-      }
-
-      // Use original filename if provided and has valid extension
-      if (image.filename && typeof image.filename === 'string') {
-        const originalName = image.filename.toLowerCase();
-        if (originalName.endsWith('.jpg') || originalName.endsWith('.jpeg') || 
-            originalName.endsWith('.png') || originalName.endsWith('.gif') || 
-            originalName.endsWith('.webp')) {
-          filename = image.filename;
         }
       }
 
@@ -137,14 +124,8 @@ app.post('/api/facebook/post', async (req, res) => {
 
       // Create form data for multipart upload
       const formData = new FormData();
-      
-      // Add the message first
       formData.append('message', postText);
-      
-      // Add the access token
       formData.append('access_token', userAccessToken);
-      
-      // Add the image file with proper stream handling
       formData.append('source', imageBuffer, {
         filename: filename,
         contentType: contentType,
@@ -164,7 +145,7 @@ app.post('/api/facebook/post', async (req, res) => {
           },
           maxContentLength: Infinity,
           maxBodyLength: Infinity,
-          timeout: 60000 // 60 second timeout for image uploads
+          timeout: 60000
         }
       );
 

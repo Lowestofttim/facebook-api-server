@@ -225,11 +225,14 @@ app.post('/api/instagram/post', async (req, res) => {
   console.log('=== Instagram POST request received ===');
   
   try {
-    const { character_name, google_drive_file, instagram_post } = req.body;
-    const instagramAccessToken = req.headers.authorization?.replace('Bearer ', '');
+    const { character_name, facebook_access_token, instagram_business_account_id, google_drive_file, instagram_post } = req.body;
+    
+    // Get Instagram access token from request body (Facebook token works for Instagram)
+    const instagramAccessToken = facebook_access_token;
 
     console.log('Parsed Instagram request data:', {
       character_name: character_name,
+      instagram_business_account_id: instagram_business_account_id,
       hasGoogleDriveFile: !!google_drive_file,
       hasInstagramPost: !!instagram_post,
       hasToken: !!instagramAccessToken
@@ -245,18 +248,26 @@ app.post('/api/instagram/post', async (req, res) => {
       return res.status(400).json({ error: 'Instagram access token is required' });
     }
 
+    if (!instagram_business_account_id) {
+      console.log('ERROR: Instagram Business Account ID is missing');
+      return res.status(400).json({ error: 'Instagram Business Account ID is required' });
+    }
+
     if (!google_drive_file || !google_drive_file.file_id) {
       console.log('ERROR: Google Drive file information is missing');
       return res.status(400).json({ error: 'Google Drive file information is required' });
     }
 
-    // For now, return a placeholder response until we get the Instagram access token
-    console.log('Instagram endpoint working - ready for Instagram access token and API implementation');
+    // For now, return a success response to confirm the endpoint is working
+    console.log('Instagram endpoint working - all required data received');
+    console.log(`Instagram Business Account ID: ${instagram_business_account_id}`);
+    console.log(`Google Drive file: ${google_drive_file.file_name} (${google_drive_file.file_id})`);
 
     res.json({
       success: true,
-      message: 'Instagram endpoint is working - need Instagram access token to proceed',
+      message: 'Instagram endpoint is working - ready to implement Instagram API posting',
       character_name: character_name,
+      instagram_business_account_id: instagram_business_account_id,
       google_drive_file: google_drive_file,
       instagram_post: instagram_post,
       platform: 'Instagram'
@@ -272,7 +283,6 @@ app.post('/api/instagram/post', async (req, res) => {
     });
   }
 });
-
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`Facebook & Instagram API Server running on port ${PORT}`);

@@ -261,29 +261,90 @@ app.post('/api/instagram/post', async (req, res) => {
       return res.status(400).json({ error: 'Google Drive file information is required' });
     }
 
-    // For now, return a success response to confirm the endpoint is working
-    console.log('Instagram endpoint working - all required data received');
+    console.log('Starting Instagram posting process...');
     console.log(`Instagram Business Account ID: ${instagram_business_account_id}`);
     console.log(`Google Drive file: ${google_drive_file.file_name} (${google_drive_file.file_id})`);
-    console.log(`Caption: ${instagram_post.caption.substring(0, 50)}...`);
+
+    // Prepare Instagram caption with hashtags
+    let caption = instagram_post.caption;
+    if (instagram_post.hashtags && instagram_post.hashtags.length > 0) {
+      const hashtagText = instagram_post.hashtags.map(tag => 
+        tag.startsWith('#') ? tag : `#${tag}`
+      ).join(' ');
+      caption = `${instagram_post.caption}\n\n${hashtagText}`;
+    }
+
+    console.log(`Final Instagram caption: ${caption.substring(0, 100)}...`);
+
+    // Step 1: Create Instagram media container
+    console.log('Step 1: Creating Instagram media container...');
+    
+    const mediaFormData = new URLSearchParams();
+    mediaFormData.append('image_url', `https://drive.google.com/uc?export=download&id=${google_drive_file.file_id}`);
+    mediaFormData.append('caption', caption);
+    mediaFormData.append('access_token', instagramAccessToken);
+
+    const mediaResponse = await axios.post(
+      `https://graph.facebook.com/v18.0/${instagram_business_account_id}/media`,
+      mediaFormData.toString(),
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        timeout: 60000
+      }
+    );
+
+    console.log('Instagram media container SUCCESS:', mediaResponse.data);
+    const mediaContainerId = mediaResponse.data.id;
+
+    // Step 2: Publish the Instagram media container
+    console.log('Step 2: Publishing Instagram media container...');
+    
+    const publishFormData = new URLSearchParams();
+    publishFormData.append('creation_id', mediaContainerId);
+    publishFormData.append('access_token', instagramAccessToken);
+
+    const publishResponse = await axios.post(
+      `https://graph.facebook.com/v18.0/${instagram_business_account_id}/media_publish`,
+      publishFormData.toString(),
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        timeout: 30000
+      }
+    );
+
+    console.log('Instagram publish SUCCESS:', publishResponse.data);
 
     res.json({
       success: true,
-      message: 'Instagram endpoint is working - ready to implement Instagram API posting',
-      character_name: character_name,
+      post_id: publishResponse.data.id,
+      post_url: `https://instagram.com/p/${publishResponse.data.id}`,
+      platform: 'Instagram',
+      endpoint_used: 'media_publish',
+      image_uploaded: true,
+      media_container_id: mediaContainerId,
       instagram_business_account_id: instagram_business_account_id,
-      google_drive_file: google_drive_file,
-      instagram_post: instagram_post,
-      platform: 'Instagram'
+      caption: caption,
+      image_info: {
+        filename: google_drive_file.file_name,
+        google_drive_id: google_drive_file.file_id
+      }
     });
 
   } catch (error) {
     console.error('=== Instagram API Error ===');
     console.error('Error message:', error.message);
+    console.error('Error response status:', error.response?.status);
+    console.error('Error response data:', error.response?.data);
+    console.error('Full error:', error);
     
     res.status(500).json({
       error: 'Failed to post to Instagram',
-      message: error.message
+      message: error.response?.data?.error?.message || error.message,
+      instagramError: error.response?.data?.error
     });
   }
 });

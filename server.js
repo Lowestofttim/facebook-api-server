@@ -38,20 +38,27 @@ app.post('/api/facebook/post', async (req, res) => {
       return res.status(400).json({ error: 'Page ID is required (either in request or environment)' });
     }
 
-    // Post to Facebook page
+    // Prepare form data for Facebook API (Facebook expects form-encoded data, not JSON)
+    const params = new URLSearchParams();
+    params.append('message', postText);
+    params.append('access_token', userAccessToken);
+
+    // Post to Facebook page using form-encoded data
     const response = await axios.post(
       `https://graph.facebook.com/v18.0/${targetPageId}/feed`,
+      params,
       {
-        message: postText,
-        access_token: userAccessToken
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
       }
     );
 
     res.json({
       success: true,
-      postId: response.data.id,
-      platform: 'Facebook',
-      url: `https://facebook.com/${response.data.id}`
+      post_id: response.data.id,
+      post_url: `https://facebook.com/${response.data.id}`,
+      platform: 'Facebook'
     });
 
   } catch (error) {
@@ -62,9 +69,4 @@ app.post('/api/facebook/post', async (req, res) => {
       facebookError: error.response?.data?.error // This helps Pipedream parse the error
     });
   }
-});
-
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => {
-  console.log(`Facebook API Server running on port ${PORT}`);
 });

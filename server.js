@@ -1,5 +1,6 @@
 const express = require('express');
 const axios = require('axios');
+const FormData = require('form-data');
 require('dotenv').config();
 
 const app = express();
@@ -9,7 +10,11 @@ app.use(express.json({ limit: '50mb' }));
 app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
   if (req.method === 'POST') {
-    console.log('Request body:', JSON.stringify(req.body, null, 2));
+    const logBody = { ...req.body };
+    if (logBody.image?.data) {
+      logBody.image.data = '[BASE64_IMAGE_DATA_TRUNCATED]';
+    }
+    console.log('Request body:', JSON.stringify(logBody, null, 2));
     console.log('Request headers:', JSON.stringify(req.headers, null, 2));
   }
   next();
@@ -24,14 +29,16 @@ app.post('/api/facebook/post', async (req, res) => {
   console.log('=== Facebook POST request received ===');
   
   try {
-    const { content, hashtags, pageId } = req.body;
+    const { content, hashtags, pageId, image, facebookEndpoint, usePhotosEndpoint } = req.body;
     const userAccessToken = req.headers.authorization?.replace('Bearer ', '');
 
     console.log('Parsed request data:', {
       content: content ? `${content.substring(0, 50)}...` : 'MISSING',
       hashtags: hashtags,
       pageId: pageId,
-      hasToken: !!userAccessToken
+      hasToken: !!userAccessToken,
+      hasImage: !!image,
+      requestedEndpoint: facebookEndpoint || (usePhotosEndpoint ? 'photos' : 'feed')
     });
 
     if (!content) {
@@ -44,17 +51,6 @@ app.post('/api/facebook/post', async (req, res) => {
       return res.status(400).json({ error: 'Access token is required' });
     }
 
-    // Prepare post text
-    let postText = content;
-    if (hashtags && hashtags.length > 0) {
-      const hashtagText = hashtags.map(tag => 
-        tag.startsWith('#') ? tag : `#${tag}`
-      ).join(' ');
-      postText = `${content}\n\n${hashtagText}`;
-    }
-
-    console.log('Final post text length:', postText.length);
-
     // Use pageId from request if provided, otherwise fall back to environment variable
     const targetPageId = pageId || process.env.FACEBOOK_PAGE_ID;
     
@@ -65,32 +61,97 @@ app.post('/api/facebook/post', async (req, res) => {
 
     console.log('Target page ID:', targetPageId);
 
-    // Create URLSearchParams object for proper form encoding
-    const formData = new URLSearchParams();
-    formData.append('message', postText);
-    formData.append('access_token', userAccessToken);
-
-    console.log('Form data prepared, making Facebook API request...');
-
-    // Post to Facebook page using properly form-encoded data
-    const response = await axios.post(
-      `https://graph.facebook.com/v18.0/${targetPageId}/feed`,
-      formData.toString(),
-      {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        }
+    // Check if we have an image to post
+    if (image && image.data && (facebookEndpoint === 'photos' || usePhotosEndpoint)) {
+      console.log('Processing image post via /photos endpoint...');
+      
+      // Prepare post text with hashtags for photo post
+      let postText = content;
+      if (hashtags && hashtags.length > 0) {
+        const hashtagText = hashtags.map(tag => 
+          tag.startsWith('#') ? tag : `#${tag}`
+        ).join(' ');
+        postText = `${content}\n\n${hashtagText}`;
       }
-    );
 
-    console.log('Facebook API SUCCESS:', response.data);
+      // Convert base64 to buffer
+      const imageBuffer = Buffer.from(image.data, 'base64');
+      console.log(`Image buffer size: ${imageBuffer.length} bytes`);
 
-    res.json({
-      success: true,
-      post_id: response.data.id,
-      post_url: `https://facebook.com/${response.data.id}`,
-      platform: 'Facebook'
-    });
+      // Create form data for multipart upload
+      const formData = new FormData();
+      formData.append('message', postText);
+      formData.append('access_token', userAccessToken);
+      formData.append('source', imageBuffer, {
+        filename: image.filename || 'image.jpg',
+        contentType: image.mimeType || 'image/jpeg'
+      });
+
+      console.log('Form data prepared for /photos endpoint, making Facebook API request...');
+
+      // Post to Facebook page photos endpoint
+      const response = await axios.post(
+        `https://graph.facebook.com/v18.0/${targetPageId}/photos`,
+        formData,
+        {
+          headers: {
+            ...formData.getHeaders()
+          }
+        }
+      );
+
+      console.log('Facebook /photos API SUCCESS:', response.data);
+
+      res.json({
+        success: true,
+        post_id: response.data.id,
+        post_url: `https://facebook.com/${response.data.id}`,
+        platform: 'Facebook',
+        endpoint_used: 'photos'
+      });
+
+    } else {
+      console.log('Processing text-only post via /feed endpoint...');
+      
+      // Prepare post text for text-only post
+      let postText = content;
+      if (hashtags && hashtags.length > 0) {
+        const hashtagText = hashtags.map(tag => 
+          tag.startsWith('#') ? tag : `#${tag}`
+        ).join(' ');
+        postText = `${content}\n\n${hashtagText}`;
+      }
+
+      console.log('Final post text length:', postText.length);
+
+      // Create URLSearchParams object for proper form encoding
+      const formData = new URLSearchParams();
+      formData.append('message', postText);
+      formData.append('access_token', userAccessToken);
+
+      console.log('Form data prepared for /feed endpoint, making Facebook API request...');
+
+      // Post to Facebook page using properly form-encoded data
+      const response = await axios.post(
+        `https://graph.facebook.com/v18.0/${targetPageId}/feed`,
+        formData.toString(),
+        {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded'
+          }
+        }
+      );
+
+      console.log('Facebook /feed API SUCCESS:', response.data);
+
+      res.json({
+        success: true,
+        post_id: response.data.id,
+        post_url: `https://facebook.com/${response.data.id}`,
+        platform: 'Facebook',
+        endpoint_used: 'feed'
+      });
+    }
 
   } catch (error) {
     console.error('=== Facebook API Error ===');
